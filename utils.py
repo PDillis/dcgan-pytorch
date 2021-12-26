@@ -6,11 +6,64 @@ from locale import atof
 
 from typing import Union, Optional, Tuple, List
 from collections import OrderedDict
+import sys
 
 import numpy as np
+import torch.nn as nn
+
 
 # ----------------------------------------------------------------------------
 
+
+# init_dict for initializing the neural networks
+init_dict = {
+        'uniform': nn.init.uniform_,    # U([0, 1])
+        'normal': nn.init.normal_,      # N(0, 1)
+        'constant': nn.init.constant_,
+        'ones': nn.init.ones_,
+        'zeros': nn.init.zeros_,
+        'eye': nn.init.eye_,
+        'dirac': nn.init.dirac_,
+        'xavier_uniform': nn.init.xavier_uniform_,
+        'xavier': nn.init.xavier_normal_,
+        'kaiming_uniform': nn.init.kaiming_uniform_,
+        'kaiming': nn.init.kaiming_normal_,
+        'orthogonal': nn.init.orthogonal_,
+        'sparse': nn.init.sparse_
+}
+
+
+def weights_init(module: nn.Module, init_type: str = 'kaiming', const: float = None, bias_init: float = 0.0) -> None:
+    """
+    Auxiliary function to initialize the parameters of a network
+    Args:
+        module (nn.Module): Network to initialize
+        init_type (str): type of initialization to apply; must be in init_dict (though I've listed all available inits)
+        const (float): constant value to fill the weight, used if init_type='constant'
+        bias_init (float): value to initialize the bias (we zero-initialize the bias by default)
+    Output:
+        (NoneType), applies the desired initialization to the module's layers
+    """
+    # We will use a set of available initializations
+    if init_type not in init_dict:
+        print(f'{init_type} not available.')
+        sys.exit(1)
+    if isinstance(module, nn.Linear):
+        # The special case will be the constant initialization
+        if init_type == 'constant':
+            # Make sure the user has provided the constant value
+            # (guard against user forgetting and using a default value)
+            assert const is not None, 'Please provide the constant value! (const)'
+            # Then, initialize the weight with the provided constant
+            init_dict[init_type](module.weight, const)
+        else:
+            # Else, it's one of the other initialization methods:
+            init_dict[init_type](module.weight)
+        # Initialize the bias with zeros (in-place); can be changed if so desired
+        module.bias.data.fill_(bias_init)
+
+
+# ----------------------------------------------------------------------------
 
 def create_image_grid(images: np.ndarray, grid_size: Optional[Tuple[int, int]] = None):
     """

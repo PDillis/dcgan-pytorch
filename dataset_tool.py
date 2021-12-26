@@ -18,3 +18,8 @@ def check_file_is_image(image_path: Union[str, os.PathLike]):
 def check_directory(directory_path: Union[str, os.PathLike], summarize_dir: bool = True):
     """Check that all images in the path are of the same shape, print out a summary in the end if needed"""
     pass
+
+
+def summarize_dataset(directory_path: Union[str, os.PathLike]):
+    """Summarize the dataset (shapes of images, channels, outliers)"""
+    pass
