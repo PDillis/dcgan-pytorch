@@ -9,7 +9,41 @@ from collections import OrderedDict
 import sys
 
 import numpy as np
+import torch
 import torch.nn as nn
+
+
+# ----------------------------------------------------------------------------
+
+
+class AttrDict(dict):
+    """ Nested Attribute Dictionary, taken from: https://stackoverflow.com/a/48806603
+
+    A class to convert a nested Dictionary into an object with key-values
+    accessible using attribute notation (AttrDict.attribute) in addition to
+    key notation (Dict["key"]). This class recursively sets Dicts to objects,
+    allowing you to recurse into nested dicts (like: AttrDict.attr.attr)
+    """
+
+    def __init__(self, mapping=None):
+        super(AttrDict, self).__init__()
+        if mapping is not None:
+            for key, value in mapping.items():
+                self.__setitem__(key, value)
+
+    def __setitem__(self, key, value):
+        if isinstance(value, dict):
+            value = AttrDict(value)
+        super(AttrDict, self).__setitem__(key, value)
+        self.__dict__[key] = value  # for code completion in editors
+
+    def __getattr__(self, item):
+        try:
+            return self.__getitem__(item)
+        except KeyError:
+            raise AttributeError(item)
+
+    __setattr__ = __setitem__
 
 
 # ----------------------------------------------------------------------------
@@ -169,13 +203,24 @@ def parse_slowdown(slowdown: Union[str, int]) -> int:
 # ----------------------------------------------------------------------------
 
 
+def z_to_img(G, latents: torch.Tensor) -> np.ndarray:
+    """Get an image/np.ndarray from the given latents (z) using the generator G. The shape of
+    the output image will be [len(latents), G.img_resolution, G.img_resolution, G.img_channels]"""
+    assert isinstance(latents, torch.Tensor), f'latents should be a torch.Tensor! Currently: {type(latents)}'
+    if len(latents) == 1:
+        latents = latents.view(1, -1, 1, 1)  # The Generator needs the latent as [1, latent_dim, 1, 1]
+    img = G(latents)
+    img = (img + 1) * 255 / 2  # [-1.0, 1.0] => [0.0, 255.0]
+    img = img.permute(0, 2, 3, 1).to(torch.uint8).cpu().numpy()  # NCHW => NWHC
+    return img
+
+# ----------------------------------------------------------------------------
+
+
 def save_config(ctx: click.Context, run_dir: Union[str, os.PathLike], save_name: str = 'config.json') -> None:
     """Save the configuration stored in ctx.obj into a JSON file at the output directory."""
     with open(os.path.join(run_dir, save_name), 'w') as f:
         json.dump(ctx.obj, f, indent=4, sort_keys=True)
-
-
-# ----------------------------------------------------------------------------
 
 
 def make_run_dir(outdir: Union[str, os.PathLike], desc: str, dry_run: bool = False) -> str:

@@ -2,8 +2,12 @@ import click
 import os
 from typing import Union
 
+import time
+
 import numpy as np
 from networks import Generator, Discriminator
+import utils
+
 import torch
 import torch.optim as optim
 
@@ -11,38 +15,110 @@ import torch.optim as optim
 # ----------------------------------------------------------------------------
 
 
+class DCGANTrainer:
+    """Trainer class based on Niantic Lab's Trainer found in: https://github.com/nianticlabs/monodepth2"""
+    def __init__(self, options):
+        self.options = options
+        self.epoch = 0
+        self.step = 0
+
+        # Check dataset resolution is a power of 2
+        assert self.options.dataset_resolution & (self.options.dataset_resolution - 1) == 0
+
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+        # Set models, move them to the set device, and initialize the weights
+        self.models = dict()
+        self.models['Generator'] = Generator(self.options.latent_dim, self.options.ngf,
+                                             self.options.nc, self.options.dataset_resolution)
+        self.models['Generator'].to(self.device)
+        self.models['Generator'].init_weights()
+
+        self.models['Discriminator'] = Discriminator(self.options.nc, self.options.ndf, self.options.dataset_resolution)
+        self.models['Discriminator'].to(self.device)
+        self.models['Discriminator'].init_weights()  # TODO: start from a given checkpoint!
+
+        self.parameters_to_learn = list()
+        self.parameters_to_learn += list(self.models['Generator'].parameters())
+        self.parameters_to_learn += list(self.models['Discriminator'].parameters())
+
+        # Fix a latent
+        self.fixed_latents = torch.randn(8, self.options.latent_dim, 1, 1)
+
+    def train(self):
+        """Run the training"""
+        self.epoch = 0
+        self.step = 0
+        self.start_time = time.time()
+
+        for self.epoch in range(self.options.num_epochs):
+            self.run_epoch()
+            if (self.epoch + 1) % self.options.save_frequency == 0:
+                self.save_model()
+
+    def run_epoch(self):
+        """Run a single epoch of training through the Generator and Discriminator"""
+        print(f'Training, {self.epoch}')
+        self.epoch += 1
+
+    def save_model(self):
+        pass
+
+    def load_model(self):
+        pass
+
+    def log(self):
+        """Log events to Tensorboard"""
+        pass
+
+    def compute_loss(self):
+        pass
+
+    def generate_fake_images(self):
+        """Generate a fake batch of images to log"""
+        pass
+
+# ----------------------------------------------------------------------------
+
+
 @click.command()
+@click.pass_context
 # TODO: separate into network architecture, hyperparams, training (iterations, loss, etc.)...
 # Training options
-@click.option('--learning-rate', '-lr', type=click.FloatRange(min=0.0, min_open=True), help='Learning rate of the networks', default=0.0002)  # TODO: use different lr's for G and D
+@click.option('--num-epochs', type=click.IntRange(min=1), help='Number of epochs to train for', default=10, show_default=True)
+@click.option('--learning-rate', '-lr', type=click.FloatRange(min=0.0, min_open=True), help='Learning rate of the networks', default=0.0002, show_default=True)  # TODO: use different lr's for G and D
 @click.option('--latent-dim', '-ld', type=click.IntRange(min=1), help='Size of the latent dimension', default=100, show_default=True)
-@click.option('--gpus', help='GPUs to use (numbering according to CUDA_VISIBLE_DEVICES)', default=0)
-@click.option('--pretrained-pth', type=click.Path(file_okay=True, dir_okay=False), help='Path to pretrained model')  # TODO: allow https?
-@click.option('--dataset-resolution', type=click.IntRange(min=8), help='Dataset resolution', default=64)
+@click.option('--gpus', help='GPUs to use (numbering according to CUDA_VISIBLE_DEVICES)', default=0, show_default=True)
+@click.option('--pretrained-pth', type=click.Path(file_okay=True, dir_okay=False), help='Path to pretrained model', default='')  # TODO: allow https?
+@click.option('--dataset-resolution', type=click.IntRange(min=8), help='Dataset resolution', default=64, show_default=True)
+@click.option('--dataset-channels', 'nc', type=click.IntRange(min=1), help='Channels in image dataset; RGB by default', default=3, show_default=True)
+@click.option('--seed', type=int, help='Random seed to use for training', default=0)
 # GAN network architecture; if None, will use auto config
-@click.option('--g-blocks', help='Number of intermediate blocks for the Generator', default=None)
-@click.option('--d-blocks', help='Number of intermediate blocks for the Discriminator', default=None)
-def main(latent_dim: int, gpus: int, pretrained_pth: Union[str, os.PathLike], dataset_resolution: int,
-         g_blocks: int, d_blocks: int):
-    # Set the number of intermediate blocks automatically if user doesn't specify it
-    num_intermediate_blocks = int(np.log2(dataset_resolution / 8))  # 8 is the minimum possible resolution
-    if g_blocks is None:
-        g_blocks = num_intermediate_blocks
-    if d_blocks is None:
-        d_blocks = num_intermediate_blocks
-    assert dataset_resolution == 8 * 2 ** g_blocks and dataset_resolution == 8 * 2 ** d_blocks  # Sanity check
-
-    # Setup the networks
-    generator = Generator(latent_dim=latent_dim, ngf=128, ngc=3, num_intermediate_blocks=num_intermediate_blocks)
-    discriminator = Discriminator(nc=3, ndf=128, num_intermediate_blocks=num_intermediate_blocks)
-
-    # Init weights
-    generator.init_weights()
-    discriminator.init_weights()
-
-    # TODO: put all of the above into a Train class and then do a .run_epoch() here
-
-    pass
+@click.option('--g-blocks', type=click.IntRange(min=0), help='Number of intermediate blocks for the Generator', default=None)
+@click.option('--d-blocks', type=click.IntRange(min=0), help='Number of intermediate blocks for the Discriminator', default=None)
+@click.option('--g-filters', 'ngf', type=click.IntRange(min=1), help='Number of filters per block of the Generator', default=128, show_default=True)
+@click.option('--d-filters', 'ndf', type=click.IntRange(min=1), help='Number of filters per block of the Discriminator', default=128, show_default=True)
+@click.option('--save-freq', 'save_frequency', type=click.IntRange(min=0), help='How often to save the model (w.r.t. epochs)', default=1, show_default=True)
+def main(ctx,
+         num_epochs: int,
+         learning_rate: float,
+         latent_dim: int,
+         gpus: int,
+         pretrained_pth: Union[str, os.PathLike],
+         dataset_resolution: int,
+         nc: int,
+         seed: int,
+         g_blocks: int,
+         d_blocks: int,
+         ngf: int,
+         ndf: int,
+         save_frequency: int,
+         ):
+    # Get the parameters obtained by click and pass them to the DCGANTrainer
+    params = utils.AttrDict(ctx.params)
+    trainer = DCGANTrainer(options=params)
+    # Start the training
+    trainer.train()
 
 
 # ----------------------------------------------------------------------------

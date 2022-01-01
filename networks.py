@@ -1,11 +1,15 @@
 import os
 from typing import Union
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 from utils import weights_init
+
+
+# ----------------------------------------------------------------------------
 
 
 class GeneratorBlock(nn.Module):
@@ -30,25 +34,29 @@ class GeneratorBlock(nn.Module):
             x = F.relu(x)
         # Use Tanh for final output block
         else:
-            x = F.tanh(x)
+            x = torch.tanh(x)
         return x
 
 
-# Baseline; TODO: make improvements?
+# Baseline; TODO: make improvements, e.g., turn into WGAN, a mapping layer to W?
 class Generator(nn.Module):
-    def __init__(self, latent_dim: int, ngf: int, ngc: int, num_intermediate_blocks: int = 3):
+    def __init__(self, latent_dim: int, ngf: int, nc: int, img_resolution: int = 64):
         super(Generator, self).__init__()
-        self.num_intermediate_blocks = num_intermediate_blocks
+        # For now, the number of intermediate blocks will be dictated by the image resolution
+        self.num_intermediate_blocks = int(np.rint(np.log2(img_resolution / 8)))  # 8 is the minimum possible resolution
+        self.img_resolution = img_resolution
+        self.img_channels = nc
+        self.z_dim = latent_dim
 
         # First and last blocks
-        setattr(self, 'block0', GeneratorBlock(latent_dim, ngf * 2 ** num_intermediate_blocks, 4, 1, 0))
-        setattr(self, f'block{num_intermediate_blocks+1}', GeneratorBlock(ngf, ngc, 4, 2, 1))
+        setattr(self, 'block0', GeneratorBlock(latent_dim, ngf * 2 ** self.num_intermediate_blocks, 4, 1, 0))
 
         # Setting intermediate blocks allows for flexibility (i.e., set as many as desired)
-        for i in range(num_intermediate_blocks + 1, 0, -1):
-            output_channels = ngc if i == num_intermediate_blocks else ngf * 2 ** (i - 1)
-            setattr(self, f'block{num_intermediate_blocks-i+1}',
-                    GeneratorBlock(ngf * 2 ** i, output_channels, 4, 2, 1))
+        for i in range(self.num_intermediate_blocks+1, 0, -1):
+            # Last block will have 3 (RGB) output channels
+            output_channels = nc if i == self.num_intermediate_blocks + 1 else ngf * 2 ** (self.num_intermediate_blocks - i)
+            setattr(self, f'block{i}',
+                    GeneratorBlock(ngf * 2 ** (self.num_intermediate_blocks-i+1), output_channels, 4, 2, 1))
 
     def init_weights(self, pretrained_weights_path: Union[str, os.PathLike] = None) -> None:
         """Initialize the weights of the Generator, lest there exists a pretrained model"""
@@ -77,6 +85,9 @@ class Generator(nn.Module):
         return x
 
 
+# ----------------------------------------------------------------------------
+
+
 class DiscriminatorBLock(nn.Module):
     """Base block of the Discriminator"""
     def __init__(self, in_channels: int, out_channels: int, kernel_size: int, stride: int, padding: int):
@@ -95,7 +106,7 @@ class DiscriminatorBLock(nn.Module):
             x = F.leaky_relu(x, negative_slope=0.2)
         # Use sigmoid for final block
         elif is_final_block:
-            x = F.sigmoid(x)
+            x = torch.sigmoid(x)
         # Only apply Leaky ReLU for the first block
         else:
             x = F.leaky_relu(x, negative_slope=0.2)
@@ -103,16 +114,21 @@ class DiscriminatorBLock(nn.Module):
 
 
 class Discriminator(nn.Module):
-    def __init__(self, nc: int, ndf: int, num_intermediate_blocks: int = 3):
+    def __init__(self, nc: int, ndf: int, img_resolution: int = 64):
         super(Discriminator, self).__init__()
-        self.num_intermediate_blocks = num_intermediate_blocks
+
+        # For now, the number of intermediate blocks will be dictated by the image resolution
+        self.num_intermediate_blocks = int(np.rint(np.log2(img_resolution / 8)))  # 8 is the minimum possible resolution
+        self.img_resolution = img_resolution
+        self.img_channels = nc
 
         # Setup first and intermediate blocks
-        for i in range(num_intermediate_blocks + 1):
+        for i in range(self.num_intermediate_blocks + 1):
             input_channels = nc if i == 0 else ndf * 2 ** (i - 1)  # First block has nc channels as input
             setattr(self, f'block{i}', DiscriminatorBLock(input_channels, ndf * 2 ** i, 4, 2, 1))
 
-        setattr(self, f'block{num_intermediate_blocks+1}', DiscriminatorBLock(ndf * 2 ** num_intermediate_blocks, 1, 4, 1, 0))
+        # Final block will be a scalar/1 output channel
+        setattr(self, f'block{self.num_intermediate_blocks+1}', DiscriminatorBLock(ndf * 2 ** self.num_intermediate_blocks, 1, 4, 1, 0))
 
     def init_weights(self, pretrained_weights_path: str = None):
         """Initialize the weights of the Discriminator, lest there exists a pretrained model"""
@@ -140,3 +156,5 @@ class Discriminator(nn.Module):
         x = getattr(self, f'block{self.num_intermediate_blocks+1}')(x, is_final_block=True)
 
         return x
+
+# ----------------------------------------------------------------------------
