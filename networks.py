@@ -17,12 +17,12 @@ class GeneratorBlock(nn.Module):
     def __init__(self, in_channels: int, out_channels: int, kernel_size: int, stride: int, padding: int):
         super(GeneratorBlock, self).__init__()
 
-        # For the rest of the default values, refer to: https://pytorch.org/docs/stable/generated/torch.nn.ConvTranspose2d.html
         # TODO: make sure to fix checkerboard artifacts: https://distill.pub/2016/deconv-checkerboard/
         # Basically, do a resize, a pad, then a convolution
         # self.upsample = nn.Upsample(mode='nearest', size=tbd)
         # for padding, use: nn.functional.pad(x, pad=[0, y, 0, y])   TBD
         # self.conv = nn.Conv2d()
+        # For the rest of the default values, refer to: https://pytorch.org/docs/stable/generated/torch.nn.ConvTranspose2d.html
         self.convt = nn.ConvTranspose2d(in_channels, out_channels, kernel_size, stride, padding, bias=False)
         self.bn = nn.BatchNorm2d(out_channels)
 

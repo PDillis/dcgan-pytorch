@@ -23,3 +23,8 @@ def check_directory(directory_path: Union[str, os.PathLike], summarize_dir: bool
 def summarize_dataset(directory_path: Union[str, os.PathLike]):
     """Summarize the dataset (shapes of images, channels, outliers)"""
     pass
+
+
+def get_dataset(directory_path: Union[str, os.PathLike]):
+    """Get the Dataset of the given directory"""
+    pass

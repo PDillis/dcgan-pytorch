@@ -10,6 +10,7 @@ import utils
 
 import torch
 import torch.optim as optim
+import torch.nn as nn
 
 
 # ----------------------------------------------------------------------------
@@ -21,29 +22,46 @@ class DCGANTrainer:
         self.options = options
         self.epoch = 0
         self.step = 0
+        self.start_time = 0
+        self.device = None
+        self.models = None
+        self.fixed_latents = None
+        self.optimizer_generator = None
+        self.optimizer_discriminator = None
+        self.real_label = 1.0
+        self.fake_label = 0.0
+        self.criterion = nn.BCELoss()
 
+        # Setup the whole networks, optimizers, etc.
+        self.setup()
+
+    def setup(self):
         # Check dataset resolution is a power of 2
         assert self.options.dataset_resolution & (self.options.dataset_resolution - 1) == 0
 
+        # Set the device
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         # Set models, move them to the set device, and initialize the weights
-        self.models = dict()
-        self.models['Generator'] = Generator(self.options.latent_dim, self.options.ngf,
-                                             self.options.nc, self.options.dataset_resolution)
-        self.models['Generator'].to(self.device)
-        self.models['Generator'].init_weights()
+        self.models = utils.AttrDict()
+        self.models.generator = Generator(self.options.latent_dim, self.options.ngf, self.options.nc, self.options.dataset_resolution)
+        self.models.generator.to(self.device)
+        self.models.generator.init_weights()
 
-        self.models['Discriminator'] = Discriminator(self.options.nc, self.options.ndf, self.options.dataset_resolution)
-        self.models['Discriminator'].to(self.device)
-        self.models['Discriminator'].init_weights()  # TODO: start from a given checkpoint!
-
-        self.parameters_to_learn = list()
-        self.parameters_to_learn += list(self.models['Generator'].parameters())
-        self.parameters_to_learn += list(self.models['Discriminator'].parameters())
+        self.models.discriminator = Discriminator(self.options.nc, self.options.ndf, self.options.dataset_resolution)
+        self.models.discriminator.to(self.device)
+        self.models.discriminator.init_weights()  # TODO: start from a given checkpoint!
 
         # Fix a latent
-        self.fixed_latents = torch.randn(8, self.options.latent_dim, 1, 1)
+        self.fixed_latents = torch.randn(8, self.options.latent_dim, 1, 1, device=self.device)
+
+        # Optimizers
+        self.optimizer_generator = optim.Adam(self.models.generator.parameters(),
+                                              lr=self.options.learning_rate,
+                                              betas=(0.5, 0.999))
+        self.optimizer_discriminator = optim.Adam(self.models.discriminator.parameters(),
+                                                  lr=self.options.learning_rate,
+                                                  betas=(0.5, 0.999))
 
     def train(self):
         """Run the training"""
@@ -53,13 +71,13 @@ class DCGANTrainer:
 
         for self.epoch in range(self.options.num_epochs):
             self.run_epoch()
-            if (self.epoch + 1) % self.options.save_frequency == 0:
+            # Save the model whenever the use desires and at the end of training
+            if (self.epoch + 1) % self.options.save_frequency == 0 or self.epoch + 1 == self.options.num_epochs:
                 self.save_model()
 
     def run_epoch(self):
         """Run a single epoch of training through the Generator and Discriminator"""
         print(f'Training, {self.epoch}')
-        self.epoch += 1
 
     def save_model(self):
         pass
@@ -99,21 +117,7 @@ class DCGANTrainer:
 @click.option('--g-filters', 'ngf', type=click.IntRange(min=1), help='Number of filters per block of the Generator', default=128, show_default=True)
 @click.option('--d-filters', 'ndf', type=click.IntRange(min=1), help='Number of filters per block of the Discriminator', default=128, show_default=True)
 @click.option('--save-freq', 'save_frequency', type=click.IntRange(min=0), help='How often to save the model (w.r.t. epochs)', default=1, show_default=True)
-def main(ctx,
-         num_epochs: int,
-         learning_rate: float,
-         latent_dim: int,
-         gpus: int,
-         pretrained_pth: Union[str, os.PathLike],
-         dataset_resolution: int,
-         nc: int,
-         seed: int,
-         g_blocks: int,
-         d_blocks: int,
-         ngf: int,
-         ndf: int,
-         save_frequency: int,
-         ):
+def main(ctx, *args, **kwargs):
     # Get the parameters obtained by click and pass them to the DCGANTrainer
     params = utils.AttrDict(ctx.params)
     trainer = DCGANTrainer(options=params)

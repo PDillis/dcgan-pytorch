@@ -9,6 +9,7 @@ from collections import OrderedDict
 import sys
 
 import numpy as np
+import PIL.Image
 import torch
 import torch.nn as nn
 
@@ -135,6 +136,56 @@ def create_image_grid(images: np.ndarray, grid_size: Optional[Tuple[int, int]] =
         y = (idx // grid_w) * img_h
         grid[y:y + img_h, x:x + img_w, ...] = images[idx]
     return grid
+
+
+def setup_image_grid(images: np.ndarray,
+                     snap_res: str = '1080p',  # Choose between ['420p'|'720p'|'1080p'|'4k'|8k]
+                     random_seed=0) -> Tuple[Tuple[np.ndarray,  np.ndarray], np.ndarray]:
+    """
+    Obtain an image grid during the training phase. Note that snap_res will be used in an internal dictionary,
+    that has the following format for its values: (pixel width, pixel height, minimum columns, min rows) for the grid.
+    """
+    # Set the resolution width and height for each size of the grid
+    size_dict = {'420p':  (960, 420, 2, 1),
+                 '720p':  (1280, 720, 2, 1),
+                 '1080p': (1920, 1080, 3, 2),
+                 '4k':    (3840, 2160, 7, 4),
+                 '8k':    (7680, 4320, 7, 4)}
+    assert snap_res in size_dict, f'{snap_res} not available! Choose between "420p", "720p", "1080p", "4k", and "8k".'
+    gw = np.clip(size_dict[snap_res][0] // images.shape[1], min=size_dict[snap_res][2], max=32)  # TODO: make sure images.shape is correct!
+    gh = np.clip(size_dict[snap_res][1] // images.shape[1], min=size_dict[snap_res][3], max=32)
+
+    # Show random subset of training samples.
+    all_indices = list(range(len(images)))
+    rnd = np.random.RandomState(random_seed)
+    rnd.shuffle(all_indices)
+    grid_indices = [all_indices[i % len(all_indices)] for i in range(gw * gh)]
+
+    # Load data.
+    images = zip(*[images[i] for i in grid_indices])
+    return (gw, gh), np.stack(images)
+
+
+def save_image_grid(img:np.ndarray,
+                    fname: Union[str, os.PathLike],
+                    drange: Union[list, tuple],
+                    grid_size: Union[list, tuple]) -> None:
+    lo, hi = drange
+    img = np.asarray(img, dtype=np.float32)
+    img = (img - lo) * (255 / (hi - lo))
+    img = np.rint(img).clip(0, 255).astype(np.uint8)
+
+    gw, gh = grid_size
+    _N, C, H, W = img.shape
+    img = img.reshape([gh, gw, C, H, W])
+    img = img.transpose(0, 3, 1, 4, 2)
+    img = img.reshape([gh * H, gw * W, C])
+
+    assert C in [1, 3]
+    if C == 1:
+        PIL.Image.fromarray(img[:, :, 0], 'L').save(fname)
+    if C == 3:
+        PIL.Image.fromarray(img, 'RGB').save(fname)
 
 
 # ----------------------------------------------------------------------------
