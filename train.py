@@ -11,7 +11,7 @@ import utils
 import torch
 import torch.optim as optim
 import torch.nn as nn
-
+from torch.utils import tensorboard
 
 # ----------------------------------------------------------------------------
 
@@ -28,9 +28,12 @@ class DCGANTrainer:
         self.fixed_latents = None
         self.optimizer_generator = None
         self.optimizer_discriminator = None
-        self.real_label = 1.0
-        self.fake_label = 0.0
-        self.criterion = nn.BCELoss()
+        self.real_label = None
+        self.fake_label = None
+        self.criterion = None
+        self.writer = None
+        self.outdir = None
+        self.desc = None
 
         # Setup the whole networks, optimizers, etc.
         self.setup()
@@ -39,17 +42,29 @@ class DCGANTrainer:
         # Check dataset resolution is a power of 2
         assert self.options.dataset_resolution & (self.options.dataset_resolution - 1) == 0
 
+        # Automatically create outdir; setup experiment description
+        self.desc = f'{self.options.dataset_resolution}res'
+        self.desc = f'{self.desc}-{self.options.gpus}gpus' if self.options.gpus > 0 else f'{self.desc}-cpu'
+        if self.options.desc is not None:
+            self.desc = f'{self.desc}-{self.options.desc}'
+        self.outdir = utils.make_run_dir(self.options.outdir, self.desc, self.options.dry_run)
+
         # Set the device
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         # Set models, move them to the set device, and initialize the weights
         self.models = utils.AttrDict()
-        self.models.generator = Generator(self.options.latent_dim, self.options.ngf, self.options.nc, self.options.dataset_resolution)
-        self.models.generator.to(self.device)
+        # Generator setup and weight initialization
+        self.models.generator = Generator(self.options.latent_dim,
+                                          self.options.ngf,
+                                          self.options.nc,
+                                          self.options.dataset_resolution).to(self.device)
         self.models.generator.init_weights()
 
-        self.models.discriminator = Discriminator(self.options.nc, self.options.ndf, self.options.dataset_resolution)
-        self.models.discriminator.to(self.device)
+        # Discriminator setup and weight initialization
+        self.models.discriminator = Discriminator(self.options.nc,
+                                                  self.options.ndf,
+                                                  self.options.dataset_resolution).to(self.device)
         self.models.discriminator.init_weights()  # TODO: start from a given checkpoint!
 
         # Fix a latent
@@ -63,6 +78,16 @@ class DCGANTrainer:
                                                   lr=self.options.learning_rate,
                                                   betas=(0.5, 0.999))
 
+        # Labels to use for real and fake data, 1.0 and 0.0; for soft labels is set to 0.9 and 0.1, respectively
+        self.real_label = 1.0 - 0.1 * self.options.soft_labels
+        self.fake_label = 0.0 + 0.1 * self.options.soft_labels
+
+        # Criterion for loss
+        self.criterion = nn.BCELoss().to(self.device)
+
+        # Train logs
+        self.writer = tensorboard.SummaryWriter(os.path.join(self.outdir, 'logs'))
+
     def train(self):
         """Run the training"""
         self.epoch = 0
@@ -71,8 +96,11 @@ class DCGANTrainer:
 
         for self.epoch in range(self.options.num_epochs):
             self.run_epoch()
+            # Don't save the model if the save frequency is zero
+            if self.options.save_frequency == 0:
+                pass
             # Save the model whenever the use desires and at the end of training
-            if (self.epoch + 1) % self.options.save_frequency == 0 or self.epoch + 1 == self.options.num_epochs:
+            elif (self.epoch + 1) % self.options.save_frequency == 0 or self.epoch + 1 == self.options.num_epochs:
                 self.save_model()
 
     def run_epoch(self):
@@ -110,19 +138,28 @@ class DCGANTrainer:
 @click.option('--pretrained-pth', type=click.Path(file_okay=True, dir_okay=False), help='Path to pretrained model', default='')  # TODO: allow https?
 @click.option('--dataset-resolution', type=click.IntRange(min=8), help='Dataset resolution', default=64, show_default=True)
 @click.option('--dataset-channels', 'nc', type=click.IntRange(min=1), help='Channels in image dataset; RGB by default', default=3, show_default=True)
+@click.option('--use-soft-labels', 'soft_labels', is_flag=True, help='Use soft labels for real and fake images (0.9/0.1 instead of 1.0/0.0, respectively)')
 @click.option('--seed', type=int, help='Random seed to use for training', default=0)
+@click.option('--snapshot-res', 'snapshot_resolution', type=click.Choice(['480p', '720p', '1080p', '4k', '8k']), help='Set the resolution of the training snapshot', default='1080p', show_default=True)
+@click.option('--snapshot-save', 'snapshot_save_frequency', type=click.IntRange(min=0))
+@click.option('--dry-run', is_flag=True, help='Print the network and training options and exit')
 # GAN network architecture; if None, will use auto config
 @click.option('--g-blocks', type=click.IntRange(min=0), help='Number of intermediate blocks for the Generator', default=None)
 @click.option('--d-blocks', type=click.IntRange(min=0), help='Number of intermediate blocks for the Discriminator', default=None)
 @click.option('--g-filters', 'ngf', type=click.IntRange(min=1), help='Number of filters per block of the Generator', default=128, show_default=True)
 @click.option('--d-filters', 'ndf', type=click.IntRange(min=1), help='Number of filters per block of the Discriminator', default=128, show_default=True)
 @click.option('--save-freq', 'save_frequency', type=click.IntRange(min=0), help='How often to save the model (w.r.t. epochs)', default=1, show_default=True)
-def main(ctx, *args, **kwargs):
+@click.option('--outdir', type=click.Path(exists=False, file_okay=False), help='Root directory path to save results', default=os.path.join(os.getcwd(), 'training_runs'), show_default=True)
+@click.option('--desc', type=str, help='String to include in the outdir name', default=None)
+def main(ctx, **kwargs):
     # Get the parameters obtained by click and pass them to the DCGANTrainer
     params = utils.AttrDict(ctx.params)
     trainer = DCGANTrainer(options=params)
-    # Start the training
-    trainer.train()
+    # Print the networks
+
+    # Train when not running a dry run
+    if not params.dry_run:
+        trainer.train()
 
 
 # ----------------------------------------------------------------------------
