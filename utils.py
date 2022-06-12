@@ -49,6 +49,25 @@ class AttrDict(dict):
 
 # ----------------------------------------------------------------------------
 
+# Set the resolution width and height for each size of the grid
+size_dict = {'420p':  (960, 420, 2, 1),
+             '720p':  (1280, 720, 2, 1),
+             '1080p': (1920, 1080, 3, 2),
+             '4k':    (3840, 2160, 4, 3),
+             '8k':    (7680, 4320, 7, 4)}
+
+
+def get_grid_dims(image_width: int,
+                  image_height: int,
+                  snap_res: str = '1080p') -> Tuple[np.ndarray, np.ndarray]:
+    """Get the image grid dimensions using the image size and specified grid resolution"""
+    gw = np.clip(size_dict[snap_res][0] // image_width, a_min=size_dict[snap_res][2], a_max=32)  # TODO: make sure images.shape is correct!
+    gh = np.clip(size_dict[snap_res][1] // image_height, a_min=size_dict[snap_res][3], a_max=32)
+
+    return gw, gh
+
+# ----------------------------------------------------------------------------
+
 
 # init_dict for initializing the neural networks
 init_dict = {
@@ -139,21 +158,13 @@ def create_image_grid(images: np.ndarray, grid_size: Optional[Tuple[int, int]] =
 
 
 def setup_image_grid(images: np.ndarray,
-                     snap_res: str = '1080p',  # Choose between ['420p'|'720p'|'1080p'|'4k'|8k]
+                     snap_res: str = '1080p',  # Choose between ['420p'|'720p'|'1080p'|'4k'|'8k']
                      random_seed=0) -> Tuple[Tuple[np.ndarray,  np.ndarray], np.ndarray]:
     """
     Obtain an image grid during the training phase. Note that snap_res will be used in an internal dictionary,
     that has the following format for its values: (pixel width, pixel height, minimum columns, min rows) for the grid.
     """
-    # Set the resolution width and height for each size of the grid
-    size_dict = {'420p':  (960, 420, 2, 1),
-                 '720p':  (1280, 720, 2, 1),
-                 '1080p': (1920, 1080, 3, 2),
-                 '4k':    (3840, 2160, 7, 4),
-                 '8k':    (7680, 4320, 7, 4)}
-    assert snap_res in size_dict, f'{snap_res} not available! Choose between "420p", "720p", "1080p", "4k", and "8k".'
-    gw = np.clip(size_dict[snap_res][0] // images.shape[1], min=size_dict[snap_res][2], max=32)  # TODO: make sure images.shape is correct!
-    gh = np.clip(size_dict[snap_res][1] // images.shape[1], min=size_dict[snap_res][3], max=32)
+    gw, gh = get_grid_dims(image_width=images.shape[1], image_height=images.shape[0], snap_res=snap_res)
 
     # Show random subset of training samples.
     all_indices = list(range(len(images)))
@@ -166,7 +177,7 @@ def setup_image_grid(images: np.ndarray,
     return (gw, gh), np.stack(images)
 
 
-def save_image_grid(img:np.ndarray,
+def save_image_grid(img: np.ndarray,
                     fname: Union[str, os.PathLike],
                     drange: Union[list, tuple],
                     grid_size: Union[list, tuple]) -> None:

@@ -42,6 +42,9 @@ class DCGANTrainer:
         # Check dataset resolution is a power of 2
         assert self.options.dataset_resolution & (self.options.dataset_resolution - 1) == 0
 
+        # Use CUDNN benchmark
+        torch.backends.cudnn.benchmark = self.options.cudnn_benchmark
+
         # Automatically create outdir; setup experiment description
         self.desc = f'{self.options.dataset_resolution}res'
         self.desc = f'{self.desc}-{self.options.gpus}gpus' if self.options.gpus > 0 else f'{self.desc}-cpu'
@@ -94,6 +97,7 @@ class DCGANTrainer:
         self.step = 0
         self.start_time = time.time()
 
+        self.generate_fake_images()
         for self.epoch in range(self.options.num_epochs):
             self.run_epoch()
             # Don't save the model if the save frequency is zero
@@ -120,10 +124,19 @@ class DCGANTrainer:
     def compute_loss(self):
         pass
 
-    def generate_fake_images(self):
+    def generate_fake_images(self, iteration: int):
         """Generate a fake batch of images to log"""
-        pass
-
+        g = torch.Generator(device=self.device).manual_seed(self.options.seed)
+        grid_width, grid_height = utils.get_grid_dims(self.options.dataset_resolution,  # TODO: rectangular images!
+                                                      self.options.dataset_resolution,  # TODO: rectangular images!
+                                                      self.options.snapshot_resolution)
+        z = torch.randn(grid_width * grid_height, self.options.latent_dim, 1, 1, generator=g).to(self.device)
+        images = self.models.generator(z)
+        print('min', images.min(), 'max', images.max())
+        utils.save_image_grid(images.detach().numpy(),
+                              os.path.join(self.outdir, f'fakes_epoch{iteration:06d}.jpg'),
+                              [0, 1],
+                              (grid_width, grid_height))
 # ----------------------------------------------------------------------------
 
 
@@ -139,6 +152,7 @@ class DCGANTrainer:
 @click.option('--dataset-resolution', type=click.IntRange(min=8), help='Dataset resolution', default=64, show_default=True)
 @click.option('--dataset-channels', 'nc', type=click.IntRange(min=1), help='Channels in image dataset; RGB by default', default=3, show_default=True)
 @click.option('--use-soft-labels', 'soft_labels', is_flag=True, help='Use soft labels for real and fake images (0.9/0.1 instead of 1.0/0.0, respectively)')
+@click.option('--cudnn-benchmark', type=bool, help='Use CUDNN benchmark for faster training, given that images are of same shape', default=True, show_default=True)
 @click.option('--seed', type=int, help='Random seed to use for training', default=0)
 @click.option('--snapshot-res', 'snapshot_resolution', type=click.Choice(['480p', '720p', '1080p', '4k', '8k']), help='Set the resolution of the training snapshot', default='1080p', show_default=True)
 @click.option('--snapshot-save', 'snapshot_save_frequency', type=click.IntRange(min=0))
